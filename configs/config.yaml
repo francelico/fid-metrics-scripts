@@ -1,17 +1,8 @@
 metrics:
-  - type: fid
-    model:
-      dims: 2048
-    data:
-      dataset:
-        resize_shape: [256, 512]
-      batch_size: 64
-      num_workers: 16
-
   - type: fvd
     model:
       type: videogpt
-      path: i3d_pretrained_400.pt
+      path: weights/i3d_pretrained_400.pt
       # type: styleganv
       # path: i3d_torchscript.pt
     data:
@@ -19,7 +10,7 @@ metrics:
         sequence_length: 16
         resize_shape: [224, 224]
       batch_size: 4
-      num_workers: 16
+      num_workers: 12
 
 # num_iters: 1000
 paths: []

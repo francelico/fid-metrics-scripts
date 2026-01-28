@@ -92,48 +92,110 @@ class ImageSequenceDataset(Dataset):
         return frames
 
 
+
 class VideoDataset(Dataset):
-    def __init__(self, video_path, sequence_length=16, resize_shape=(224, 224), no_overlap=True):
-        self.video_paths = glob.glob(video_path)
-        self.sequence_length = sequence_length
-        self.no_overlap = no_overlap
+    def __init__(
+        self,
+        video_path,
+        max_videos=148,
+        sequence_length=16,
+        resize_shape=(224, 224),
+        no_overlap=True,
+        last_n_frames=200,
+    ):
+        self.video_paths = sorted(glob.glob(video_path))
+        if max_videos is not None:
+            self.video_paths = self.video_paths[:int(max_videos)]
+        self.sequence_length = int(sequence_length)
+        self.no_overlap = bool(no_overlap)
+        self.last_n_frames = None if last_n_frames is None else int(last_n_frames)
+
         self.transforms = SequeceTransform(T.Compose([T.ToTensor(), T.Resize(resize_shape)]))
 
         total_frames = 0
         self.num_accum_sequences = []
-        for video_path in self.video_paths:
-            cap = cv2.VideoCapture(video_path)
+        # store per-video selection window so __getitem__ doesn't have to recompute
+        self._start_frame = []
+        self._usable_frames = []
+
+        for vp in self.video_paths:
+            cap = cv2.VideoCapture(vp)
             num_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-            total_frames += num_frames
-            num_sequences = (
-                (num_frames // sequence_length) if no_overlap
-                else (num_frames - sequence_length + 1))
-            if len(self.num_accum_sequences) > 0:
+            cap.release()
+
+            # Select only the last_n_frames window if provided
+            if self.last_n_frames is None:
+                start = 0
+                usable = num_frames
+            else:
+                usable = min(num_frames, self.last_n_frames)
+                start = max(0, num_frames - usable)
+
+            total_frames += (num_frames - start)
+
+            self._start_frame.append(start)
+            self._usable_frames.append(usable)
+
+            # Split the selected window into clips of sequence_length
+            if usable < self.sequence_length:
+                num_sequences = 0
+            else:
+                num_sequences = (
+                    (usable // self.sequence_length) if self.no_overlap
+                    else (usable - self.sequence_length + 1)
+                )
+
+            if self.num_accum_sequences:
                 self.num_accum_sequences.append(self.num_accum_sequences[-1] + num_sequences)
             else:
                 self.num_accum_sequences.append(num_sequences)
-            cap.release()
-        print(f'Loaded {len(self.video_paths)} video files, {total_frames} frames total')
+
+        print(f"Loaded {len(self.video_paths)} video files, {total_frames} frames total")
 
     def __len__(self):
-        return self.num_accum_sequences[-1]
+        return 0 if not self.num_accum_sequences else self.num_accum_sequences[-1]
 
     def __getitem__(self, idx):
+        if idx < 0 or idx >= len(self):
+            raise IndexError(f"Index {idx} out of range for dataset of length {len(self)}")
+
         video_idx = bisect.bisect_left(self.num_accum_sequences, idx + 1)
         video_path = self.video_paths[video_idx]
-        frame_idx = idx - self.num_accum_sequences[video_idx - 1] if video_idx > 0 else 0
+
+        local_idx = idx - (self.num_accum_sequences[video_idx - 1] if video_idx > 0 else 0)
+
+        start = self._start_frame[video_idx]
+        usable = self._usable_frames[video_idx]
+
+        # local_idx is an index over sequences inside the selected window
         if self.no_overlap:
-            frame_idx *= self.sequence_length
+            offset = local_idx * self.sequence_length
+        else:
+            offset = local_idx
+
+        frame_idx = start + offset
+
+        # Safety: ensure we never read beyond the selected window
+        # (this should already be guaranteed by num_sequences computation)
+        end_allowed = start + usable
+        if frame_idx + self.sequence_length > end_allowed:
+            raise RuntimeError(
+                f"Computed clip [{frame_idx}, {frame_idx + self.sequence_length}) exceeds "
+                f"selected window [{start}, {end_allowed}) for {video_path}"
+            )
 
         cap = cv2.VideoCapture(video_path)
         cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
+
         frames = []
         for _ in range(self.sequence_length):
             ret, frame = cap.read()
-            assert ret
+            if not ret:
+                cap.release()
+                raise RuntimeError(f"Failed to read frame at {frame_idx} from {video_path}")
             frames.append(frame)
-        cap.release()
 
+        cap.release()
         frames = self.transforms(frames)
         return frames
 
