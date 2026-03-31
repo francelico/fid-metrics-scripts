@@ -97,18 +97,20 @@ class VideoDataset(Dataset):
     def __init__(
         self,
         video_path,
-        max_videos=148,
+        max_videos=173,
         sequence_length=16,
         resize_shape=(224, 224),
         no_overlap=True,
-        last_n_frames=200,
+        start_frame=0,
+        end_frame=600,
     ):
         self.video_paths = sorted(glob.glob(video_path))
         if max_videos is not None:
             self.video_paths = self.video_paths[:int(max_videos)]
         self.sequence_length = int(sequence_length)
         self.no_overlap = bool(no_overlap)
-        self.last_n_frames = None if last_n_frames is None else int(last_n_frames)
+        self.start_from_frame = start_frame
+        self.end_frame = end_frame
 
         self.transforms = SequeceTransform(T.Compose([T.ToTensor(), T.Resize(resize_shape)]))
 
@@ -124,14 +126,11 @@ class VideoDataset(Dataset):
             cap.release()
 
             # Select only the last_n_frames window if provided
-            if self.last_n_frames is None:
-                start = 0
-                usable = num_frames
-            else:
-                usable = min(num_frames, self.last_n_frames)
-                start = max(0, num_frames - usable)
+            start = self.start_from_frame
+            end = min(num_frames, self.end_frame) if self.end_frame is not None else num_frames
+            usable = end - start
 
-            total_frames += (num_frames - start)
+            total_frames += usable
 
             self._start_frame.append(start)
             self._usable_frames.append(usable)
