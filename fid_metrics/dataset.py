@@ -102,7 +102,7 @@ class VideoDataset(Dataset):
         resize_shape=(224, 224),
         no_overlap=True,
         start_frame=0,
-        end_frame=600,
+        end_frame=200,
     ):
         self.video_paths = sorted(glob.glob(video_path))
         if max_videos is not None:

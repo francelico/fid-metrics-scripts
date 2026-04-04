@@ -6,6 +6,7 @@ to save_dir/level_XXX.mp4.
 Supported inputs:
   1. A single run path via --run
   2. A CSV file with a "Name" column via --file-csv
+  3. A partial run match via --run-pattern
 
 Expected file layout inside each run:
   media/videos/pixel_videos/val_level_001_0_def7f5e1e9380dd8dfb3.mp4
@@ -22,6 +23,13 @@ Single run:
 CSV of runs:
   python wandb_download_levels.py \
       --file-csv runs.csv \
+      --save-dir /tmp/videos \
+      --prefix media/videos/pixel_videos \
+      --keep latest
+
+Pattern match:
+  python wandb_download_levels.py \
+      --run-pattern entity/project/persist260k-xl-vox \
       --save-dir /tmp/videos \
       --prefix media/videos/pixel_videos \
       --keep latest
@@ -43,7 +51,6 @@ def choose_one(files, keep: str):
     if keep == "first":
         return files[0]
     if keep == "latest":
-        # Heuristic: W&B file objects sometimes expose updatedAt / updated_at.
         def key(f):
             return getattr(f, "updatedAt", None) or getattr(f, "updated_at", None) or f.name
 
@@ -56,7 +63,6 @@ def remove_empty_media_dir(save_dir: Path):
     if not media_dir.exists():
         return
 
-    # remove empty directories bottom-up
     for p in sorted(media_dir.rglob("*"), reverse=True):
         if p.is_dir():
             try:
@@ -96,6 +102,35 @@ def normalize_run_path(run_path: str) -> str:
     )
 
 
+def parse_run_pattern(run_pattern: str):
+    """
+    Parse a run pattern of the form:
+      - entity/project/pattern
+      - entity/project/runs/pattern
+
+    Returns:
+      project_path: entity/project
+      pattern: partial string to match
+    """
+    run_pattern = run_pattern.strip().strip("/")
+    parts = run_pattern.split("/")
+
+    if len(parts) == 4 and parts[2] == "runs":
+        project_path = "/".join(parts[:2])
+        pattern = parts[3]
+        return project_path, pattern
+
+    if len(parts) == 3:
+        project_path = "/".join(parts[:2])
+        pattern = parts[2]
+        return project_path, pattern
+
+    raise ValueError(
+        f"Unrecognized --run-pattern format: {run_pattern!r}. "
+        "Expected 'entity/project/pattern' or 'entity/project/runs/pattern'."
+    )
+
+
 def load_runs_from_csv(file_csv: Path) -> list[str]:
     """
     Load run paths from a CSV file with a required 'Name' column.
@@ -125,6 +160,49 @@ def load_runs_from_csv(file_csv: Path) -> list[str]:
     return runs
 
 
+def load_runs_from_pattern(api: wandb.Api, run_pattern: str) -> list[str]:
+    """
+    Find all runs in a project whose id, name, display_name, or path contains
+    the provided partial pattern.
+
+    --run-pattern must be:
+      - entity/project/pattern
+      - entity/project/runs/pattern
+    """
+    project_path, pattern = parse_run_pattern(run_pattern)
+    pattern_lc = pattern.lower()
+
+    matched = []
+    seen = set()
+
+    for run in api.runs(project_path):
+        run_id = str(getattr(run, "id", "") or "")
+        run_name = str(getattr(run, "name", "") or "")
+        run_display_name = str(getattr(run, "display_name", "") or "")
+        run_path = "/".join(getattr(run, "path", []) or [])
+        normalized_path = normalize_run_path(run_path) if run_path else ""
+
+        haystacks = [
+            run_id,
+            run_name,
+            run_display_name,
+            run_path,
+            normalized_path,
+        ]
+
+        if any(pattern_lc in h.lower() for h in haystacks if h):
+            if normalized_path and normalized_path not in seen:
+                seen.add(normalized_path)
+                matched.append(normalized_path)
+
+    if not matched:
+        raise ValueError(
+            f"No runs matched pattern {pattern!r} in project {project_path!r}."
+        )
+
+    return matched
+
+
 def collect_matching_files(run, prefix: str) -> dict[str, list]:
     """
     Collect matching mp4 files from a run, grouped by level string.
@@ -133,7 +211,7 @@ def collect_matching_files(run, prefix: str) -> dict[str, list]:
 
     prefix_with_slash = prefix.rstrip("/") + "/"
     for f in run.files():
-        name = f.name  # path inside run
+        name = f.name
 
         if not name.startswith(prefix_with_slash):
             continue
@@ -144,7 +222,7 @@ def collect_matching_files(run, prefix: str) -> dict[str, list]:
         if not m:
             continue
 
-        level = m.group(1)  # e.g. "001"
+        level = m.group(1)
         matches_by_level.setdefault(level, []).append(f)
 
     return matches_by_level
@@ -162,6 +240,14 @@ def main():
         "--file-csv",
         type=Path,
         help="CSV file containing a 'Name' column with run paths",
+    )
+    src.add_argument(
+        "--run-pattern",
+        help=(
+            "Partial run match of the form entity/project/pattern "
+            "(or entity/project/runs/pattern). "
+            "All matching runs in that project will be used."
+        ),
     )
 
     ap.add_argument("--save-dir", required=True, type=Path)
@@ -187,12 +273,16 @@ def main():
     save_dir = args.save_dir.expanduser().resolve()
     save_dir.mkdir(parents=True, exist_ok=True)
 
+    api = wandb.Api()
+
     if args.run:
         run_paths = [normalize_run_path(args.run)]
-    else:
+    elif args.file_csv:
         run_paths = load_runs_from_csv(args.file_csv)
+    else:
+        run_paths = load_runs_from_pattern(api, args.run_pattern)
 
-    api = wandb.Api()
+    print(f"[info] Using {len(run_paths)} run(s)")
 
     total_downloaded = 0
     total_skipped_existing = 0
@@ -214,8 +304,6 @@ def main():
             chosen = choose_one(matches_by_level[level], args.keep)
             dst = save_dir / f"level_{level}.mp4"
 
-            # Duplicate handling across all runs:
-            # if another run already produced this destination, skip.
             if dst.exists():
                 print(f"[skip] exists: {dst} (from run {run_path})")
                 total_skipped_existing += 1
@@ -226,12 +314,10 @@ def main():
                 total_downloaded += 1
                 continue
 
-            # Download into save_dir, preserving run-internal subfolders
             downloaded_path = Path(
                 chosen.download(root=str(save_dir), replace=False).name
             )
 
-            # Move/rename to desired destination
             downloaded_path.replace(dst)
             total_downloaded += 1
 
