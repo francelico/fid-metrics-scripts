@@ -9,6 +9,9 @@ metrics:
       dataset:
         sequence_length: 16
         resize_shape: [224, 224]
+        start_frame: 0
+        end_frame: 200       # window end (frames); try 200/400/600
+        max_videos: 256      # cap on videos compared
       batch_size: 4
       num_workers: 12
 

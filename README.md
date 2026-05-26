@@ -32,13 +32,16 @@ python copy_from_dataset.py --selected_dir WORLDMEMPATH --dataset_dir PATH/free_
 
 1. **Calculating FID/FVD**
 
-Manually modify l100-105 of fid_metrics/dataset.py to set end_frame (200/400/600) and max_videos (set to number you downloaded, aim for at least 64).
+Set the frame window and video count as command-line overrides (no code editing needed). `end_frame` is the window end in frames (try 200/400/600); `max_videos` caps how many videos are compared (set to the number you downloaded; at least 64, ideally 173, not more). Defaults live in `configs/config.yaml` under `metrics.0.data.dataset`.
 
-Note: Previous results used 173 videos. For reference going from 173->64 videos persist_base increases ~40 pts FVD. Going anywhere 64 would be ill-advised.
+For reference going from 173->64 videos persist_base increases ~40 pts FVD
 
 script supports regex:
     ```shell
-    python fid_metrics/main.py paths=[PATH/free_noop_and_look_around_selected/*.mp4,WORLDMEMPATH/*.mp4]
+    python fid_metrics/main.py \
+      paths=[PATH/free_noop_and_look_around_selected/*.mp4,WORLDMEMPATH/*.mp4] \
+      metrics.0.data.dataset.end_frame=400 \
+      metrics.0.data.dataset.max_videos=64
     ```
 
 or any path1, path2:

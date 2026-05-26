@@ -97,7 +97,7 @@ class VideoDataset(Dataset):
     def __init__(
         self,
         video_path,
-        max_videos=173,
+        max_videos=168,
         sequence_length=16,
         resize_shape=(224, 224),
         no_overlap=True,

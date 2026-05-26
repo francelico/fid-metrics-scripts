@@ -31,6 +31,8 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 """
+import csv
+
 import numpy as np
 import torch
 from scipy import linalg
@@ -122,6 +124,24 @@ def calculate_fid(act1, act2):
     m1, s1 = calculate_act_statistics(act1)
     m2, s2 = calculate_act_statistics(act2)
     return calculate_frechet_distance(m1, s1, m2, s2)
+
+
+def calculate_fid_per_frame(act1, act2, start_frame=0, output_csv='fid_per_frame.csv'):
+    """FID computed independently at each frame index.
+
+    `act1`, `act2` are [num_videos, num_frames, dims] feature arrays (frame t of
+    every video grouped together). Writes (frame_index, fid) rows to `output_csv`
+    and returns the list of per-frame FID scores.
+    """
+    num_frames = min(act1.shape[1], act2.shape[1])
+    scores = [calculate_fid(act1[:, t], act2[:, t]) for t in range(num_frames)]
+    with open(output_csv, 'w', newline='') as f:
+        writer = csv.writer(f)
+        writer.writerow(['frame_index', 'fid'])
+        for t, score in enumerate(scores):
+            writer.writerow([start_frame + t, float(score)])
+    print(f'Wrote {num_frames} rows to {output_csv}')
+    return scores
 
 
 def postprocess_i2d_pred(pred):

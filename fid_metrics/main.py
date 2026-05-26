@@ -1,3 +1,5 @@
+import os
+
 import hydra
 import numpy as np
 import torch
@@ -11,6 +13,7 @@ from fid_metrics import (
     build_inception,
     build_inception3d,
     calculate_fid,
+    calculate_fid_per_frame,
     is_image_dir_path,
     is_video_path,
     postprocess_i2d_pred,
@@ -31,20 +34,34 @@ def build_loaders(type, paths, cfg):
                 else:
                     dataset_cfgs = {'sequence_length': bs}
                 bs = 1
+            elif type == 'fid_per_frame':
+                # One item == one video's full [start_frame, end_frame) window,
+                # so position t in every clip is the same absolute frame index.
+                dataset_cfgs = dict(dataset_cfgs) if dataset_cfgs else {}
+                start = int(dataset_cfgs.get('start_frame', 0))
+                end = dataset_cfgs.get('end_frame')
+                assert end is not None, 'fid_per_frame requires data.dataset.end_frame'
+                dataset_cfgs['sequence_length'] = int(end) - start
+                dataset_cfgs['no_overlap'] = True
+                bs = 1
             C = VideoDataset
         elif is_image_dir_path(path):
+            if type == 'fid_per_frame':
+                raise NotImplementedError('fid_per_frame supports video paths only')
             C = ImageDataset if type == 'fid' else ImageSequenceDataset
         else:
             raise NotImplementedError
 
         dataset = C(path, **dataset_cfgs) if dataset_cfgs else C(path)
-        dl = torch.utils.data.DataLoader(dataset, bs, shuffle=True, num_workers=cfg.num_workers)
+        dl = torch.utils.data.DataLoader(
+            dataset, bs, shuffle=type != 'fid_per_frame', num_workers=cfg.num_workers
+        )
         dls.append(dl)
     return dls
 
 
 def build_model(type, cfg):
-    if type == 'fid':
+    if type in ('fid', 'fid_per_frame'):
         return build_inception(cfg.dims)
     elif type == 'fvd':
         return build_inception3d(cfg.type, cfg.path)
@@ -74,7 +91,7 @@ def main(cfg: DictConfig):
 
             for _ in track(seq, description=f'{type}_{i}'):
                 x = next(dl).to(device)
-                if type == 'fid' and x.dim() == 5:
+                if type in ('fid', 'fid_per_frame') and x.dim() == 5:
                     x = x.squeeze(0).transpose(0, 1)
                 elif type == 'fvd':
                     x = x * 2 - 1  # [-1, 1]
@@ -82,6 +99,13 @@ def main(cfg: DictConfig):
                     if type == 'fid':
                         pred = model(x)
                         pred = postprocess_i2d_pred(pred)
+                    elif type == 'fid_per_frame':
+                        # forward the window's frames in batches of batch_size
+                        chunk = metric_cfgs.data.batch_size
+                        preds = [postprocess_i2d_pred(model(x[s:s + chunk]))
+                                 for s in range(0, x.shape[0], chunk)]
+                        preds = [p if p.dim() > 1 else p.unsqueeze(0) for p in preds]
+                        pred = torch.cat(preds, dim=0)
                     elif type == 'fvd':
                         if metric_cfgs.model.type == 'styleganv':
                             pred = model(x, return_features=True)
@@ -89,9 +113,20 @@ def main(cfg: DictConfig):
                             pred = model(x)
 
                 feats[i].append(pred.cpu().numpy())
-            feats[i] = np.concatenate(feats[i], axis=0)
-        fid = calculate_fid(*feats)
-        print(f'{type.upper()}: {fid}')
+            feats[i] = (
+                np.stack(feats[i], axis=0)
+                if type == 'fid_per_frame'
+                else np.concatenate(feats[i], axis=0)
+            )
+        if type == 'fid_per_frame':
+            calculate_fid_per_frame(
+                *feats,
+                start_frame=int(metric_cfgs.data.dataset.get('start_frame', 0)),
+                output_csv=os.path.abspath(metric_cfgs.get('output_csv', 'fid_per_frame.csv')),
+            )
+        else:
+            fid = calculate_fid(*feats)
+            print(f'{type.upper()}: {fid}')
 
 
 if __name__ == '__main__':
