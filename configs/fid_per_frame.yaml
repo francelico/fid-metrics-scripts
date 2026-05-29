@@ -1,0 +1,20 @@
+# Per-frame FID: InceptionV3 FID between two video sets at each frame index.
+# Writes a CSV of (frame_index, fid). Run e.g.:
+#   python fid_metrics/main.py --config-name fid_per_frame \
+#     paths=[A/*.mp4,B/*.mp4] \
+#     metrics.0.data.dataset.start_frame=0 metrics.0.data.dataset.end_frame=600
+metrics:
+  - type: fid_per_frame
+    model:
+      dims: 2048
+    data:
+      dataset:
+        resize_shape: [224, 224]
+        max_videos: 256
+        start_frame: 0
+        end_frame: 600
+      batch_size: 64
+      num_workers: 4
+    output_csv: fid_per_frame.csv
+
+paths: []
