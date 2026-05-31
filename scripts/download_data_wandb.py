@@ -8,6 +8,10 @@ Supported inputs:
   2. A CSV file with a "Name" column via --file-csv
   3. A partial run match via --run-pattern
 
+By default, files are grouped by level_### and renamed to save_dir/level_XXX.mp4.
+Alternatively, when a single --run is provided, --video_filenames selects files by
+filename substring (OR match) and downloads ALL of them under their original names.
+
 Expected file layout inside each run:
   media/videos/pixel_videos/val_level_001_0_def7f5e1e9380dd8dfb3.mp4
 
@@ -203,6 +207,30 @@ def load_runs_from_pattern(api: wandb.Api, run_pattern: str) -> list[str]:
     return matched
 
 
+def collect_files_by_filename(run, prefix: str, substrings: list[str]) -> list:
+    """
+    Collect ALL mp4 files from a run (under prefix) whose basename contains ANY of
+    the provided substrings (case-insensitive OR match).
+    """
+    prefix_with_slash = prefix.rstrip("/") + "/"
+    subs_lc = [s.lower() for s in substrings]
+
+    matches = []
+    for f in run.files():
+        name = f.name
+
+        if not name.startswith(prefix_with_slash):
+            continue
+        if not name.lower().endswith(".mp4"):
+            continue
+
+        basename_lc = Path(name).name.lower()
+        if any(s in basename_lc for s in subs_lc):
+            matches.append(f)
+
+    return matches
+
+
 def collect_matching_files(run, prefix: str) -> dict[str, list]:
     """
     Collect matching mp4 files from a run, grouped by level string.
@@ -250,6 +278,15 @@ def main():
         ),
     )
 
+    ap.add_argument(
+        "--video_filenames",
+        help=(
+            "Comma-separated list of filename substrings. Only valid with a single --run. "
+            "Downloads ALL mp4s whose filename contains ANY of the substrings (OR match), "
+            "e.g. '--video_filenames vid_1,vid_2' downloads every video with 'vid_1' or "
+            "'vid_2' in its name, keeping their original filenames."
+        ),
+    )
     ap.add_argument("--save-dir", required=True, type=Path)
     ap.add_argument(
         "--prefix",
@@ -269,6 +306,14 @@ def main():
     )
     ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args()
+
+    video_filenames = None
+    if args.video_filenames:
+        if not args.run:
+            ap.error("--video_filenames can only be used together with a single --run")
+        video_filenames = [s.strip() for s in args.video_filenames.split(",") if s.strip()]
+        if not video_filenames:
+            ap.error("--video_filenames did not contain any non-empty entries")
 
     save_dir = args.save_dir.expanduser().resolve()
     save_dir.mkdir(parents=True, exist_ok=True)
@@ -291,6 +336,39 @@ def main():
     for run_path in run_paths:
         print(f"[run] {run_path}")
         run = api.run(run_path)
+
+        if video_filenames is not None:
+            files = collect_files_by_filename(run, args.prefix, video_filenames)
+
+            if not files:
+                print(
+                    f"[warn] No mp4s matching {video_filenames} under prefix "
+                    f"'{args.prefix}' in run {run_path}"
+                )
+                continue
+
+            total_runs_with_matches += 1
+
+            for f in sorted(files, key=lambda x: x.name):
+                dst = save_dir / Path(f.name).name
+
+                if dst.exists():
+                    print(f"[skip] exists: {dst} (from run {run_path})")
+                    total_skipped_existing += 1
+                    continue
+
+                print(f"[download] {run_path}: {f.name} -> {dst}")
+                if args.dry_run:
+                    total_downloaded += 1
+                    continue
+
+                downloaded_path = Path(
+                    f.download(root=str(save_dir), replace=False).name
+                )
+                downloaded_path.replace(dst)
+                total_downloaded += 1
+
+            continue
 
         matches_by_level = collect_matching_files(run, args.prefix)
 

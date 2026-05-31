@@ -21,13 +21,13 @@ In the absence of setting up the package, users can currently utilize it by the 
 Note: there are multiple options to do this based on whether the videos are in multiple runs or one, check the script itself and its arguments for detailed instructions
 ```bash
 wandb login
-python download_data_wandb.py --run-pattern samuel-garcin-research-projects/voxel_wm/ab-gtcam --save-dir WORLDMEMPATH
+python scripts/download_data_wandb.py --run-pattern samuel-garcin-research-projects/voxel_wm/ab-gtcam --save-dir WORLDMEMPATH
 ```
 
 2. **download dataset and create a filtered set corresponding to rollout videos you just downloaded **
 use azcopy to download free_noop_and_look_around
 ```bash
-python copy_from_dataset.py --selected_dir WORLDMEMPATH --dataset_dir PATH/free_noop_and_look_around --output_dir PATH/free_noop_and_look_around_selected 
+python scripts/copy_from_dataset.py --selected_dir WORLDMEMPATH --dataset_dir PATH/free_noop_and_look_around --output_dir PATH/free_noop_and_look_around_selected 
 ```
 
 1. **Calculating FID/FVD**

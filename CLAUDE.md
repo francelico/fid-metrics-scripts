@@ -43,21 +43,23 @@ The frame window and video count for FVD live in `configs/config.yaml` under `me
 
 ## Typical end-to-end workflow (from README)
 
-1. `download_data_wandb.py` — download WorldMem rollout videos from W&B (`wandb login` first).
-2. `copy_from_dataset.py` — extract the dataset videos that correspond to the downloaded rollouts (uses `azcopy`).
+1. `scripts/download_data_wandb.py` — download WorldMem rollout videos from W&B (`wandb login` first).
+2. `scripts/copy_from_dataset.py` — extract the dataset videos that correspond to the downloaded rollouts (uses `azcopy`).
 3. Edit `dataset.py` window (see gotcha above).
 4. `python fid_metrics/main.py paths=[DATASET_SELECTED/*.mp4,ROLLOUTS/*.mp4]`.
 
-## Root-level data-prep scripts
+## Data-prep / processing scripts (`scripts/`)
 
-Each is a standalone `argparse` CLI (run `python <script> -h`), independent of the `fid_metrics` package:
+The processing scripts live under `scripts/`. Each is a standalone `argparse` CLI (run `python scripts/<script> -h`), independent of the `fid_metrics` package:
 
 - `download_data_wandb.py` — pull rollout videos from W&B runs.
 - `copy_from_dataset.py` — copy dataset videos matching downloaded rollouts.
 - `filter_minedojo_data.py` / `filter_minetest_data.py` — extract/filter mp4s from MineDojo / Minetest dataset layouts.
 - `crop_top_half.py` — crop videos to the top half of each frame.
+- `split_reencode_trim.py` — split every video in a folder into two halves (horizontal cut by default → top/bottom into FOLDER_A/FOLDER_B; `--vertical-split` for left/right), re-encode to `--target-fps`, and trim to `--num-frames`.
 - `trim_to_first_n_frames.py`, `trim_and_stack_videos.py`, `trim_and_stack_videos_batched.py` — trim and side-by-side stack videos.
 - `make_video_grid.py` — assemble videos into a grid.
 - `select_common_files.py` — find filenames common across directories and copy them out.
 - `split_run_names.py` — split a CSV's `Name` column by substring patterns.
 - `path_magic.py` — reorganize a `root/dir1/dirA/*.mp4` tree into `save/dirA/dir1_dirA/*.mp4`.
+- `plot_fid_vs_t.py` — plot FID/FVD vs. time/frame window from run outputs.
