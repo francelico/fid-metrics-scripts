@@ -40,6 +40,9 @@ def set_style():
         "font.family": "serif",
         "font.serif": ["STIXGeneral", "Times New Roman", "DejaVu Serif"],
         "mathtext.fontset": "stix",
+        # Render all text (labels, ticks, math) with the LaTeX engine.
+        "text.usetex": True,
+        "text.latex.preamble": r"\usepackage{amsmath}\usepackage{bm}",
         "axes.linewidth": 0.8,
         "axes.labelsize": 10,
         "axes.titlesize": 10,
@@ -187,10 +190,17 @@ def main():
         gap = 0.075 * (y1 - y0)
         pad = 0.012 * (x1 - x0)
 
+        # With the LaTeX engine, fontweight="bold" is ignored; emit bold markup
+        # instead (\boldmath also bolds any math such as PERSIST$+\bm{w}_0$).
+        def bold(lab):
+            if plt.rcParams["text.usetex"]:
+                return r"\textbf{\boldmath " + lab + "}"
+            return lab
+
         # Cluster: curves ending at (near) the rightmost frame.
-        edge = [(lab, c, xx[-1], yy[-1]) for lab, c, xx, yy in series
+        edge = [(bold(lab), c, xx[-1], yy[-1]) for lab, c, xx, yy in series
                 if xx[-1] >= x_hi - 1e-9]
-        other = [(lab, c, xx[-1], yy[-1]) for lab, c, xx, yy in series
+        other = [(bold(lab), c, xx[-1], yy[-1]) for lab, c, xx, yy in series
                  if xx[-1] < x_hi - 1e-9]
 
         if edge:
