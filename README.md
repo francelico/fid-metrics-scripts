@@ -2,6 +2,10 @@
 
 This repository provides a toolkit for computing Fréchet Inception Distance (FID) and Fréchet Video Distance (FVD) metrics, widely utilized for assessing the quality of generative models in the fields of image and video generation.
 
+## Acknowledgements
+
+This repository is derived from [fid-metrics](https://github.com/npurson/fid-metrics). We re-implement certain methods to run metric computation directly on GPU and we add utility scripts to download & pre-process videos and to plot results.
+
 ## Installation
 
     ```bash
@@ -9,8 +13,6 @@ This repository provides a toolkit for computing Fréchet Inception Distance (FI
     ```
 
 ## Usage
-
-In the absence of setting up the package, users can currently utilize it by the following as a temporal fix.
 
 0. **Setup**
 
@@ -32,9 +34,7 @@ python scripts/copy_from_dataset.py --selected_dir WORLDMEMPATH --dataset_dir PA
 
 1. **Calculating FID/FVD**
 
-Set the frame window and video count as command-line overrides (no code editing needed). `end_frame` is the window end in frames (try 200/400/600); `max_videos` caps how many videos are compared (set to the number you downloaded; at least 64, ideally 173, not more). Defaults live in `configs/config.yaml` under `metrics.0.data.dataset`.
-
-For reference going from 173->64 videos persist_base increases ~40 pts FVD
+Set the frame window and video count as command-line overrides. `end_frame` is the window end in frames; `max_videos` caps how many videos are compared. Defaults live in `configs/config.yaml` under `metrics.0.data.dataset`.
 
 script supports regex:
     ```shell
@@ -46,10 +46,6 @@ script supports regex:
 
 or any path1, path2:
     `path1`, `path2` can either be images, videos, folders of images or pathnames of the aforementioned that match the pattern of `glob`.
-
-## Acknowledgements
-
-The code in this repository is based on [pytorch-fid](https://github.com/mseitzer/pytorch-fid) and [fvd-comparison](https://github.com/universome/fvd-comparison).
 
 ## License
 
