@@ -1,5 +1,6 @@
 import bisect
 import glob
+import random
 from typing import List
 
 import cv2
@@ -103,6 +104,8 @@ class VideoDataset(Dataset):
         no_overlap=True,
         start_frame=0,
         end_frame=200,
+        stratified_num_clips=None,
+        stratified_seed=0,
     ):
         self.video_paths = sorted(glob.glob(video_path))
         if max_videos is not None:
@@ -111,6 +114,14 @@ class VideoDataset(Dataset):
         self.no_overlap = bool(no_overlap)
         self.start_from_frame = start_frame
         self.end_frame = end_frame
+        self.stratified_num_clips = (
+            int(stratified_num_clips)
+            if stratified_num_clips is not None
+            else None
+        )
+        if self.stratified_num_clips is not None and self.stratified_num_clips <= 0:
+            raise ValueError('stratified_num_clips must be positive')
+        self.stratified_seed = int(stratified_seed)
 
         self.transforms = SequeceTransform(T.Compose([T.ToTensor(), T.Resize(resize_shape)]))
 
@@ -119,8 +130,9 @@ class VideoDataset(Dataset):
         # store per-video selection window so __getitem__ doesn't have to recompute
         self._start_frame = []
         self._usable_frames = []
+        self._selected_clip_indices = []
 
-        for vp in self.video_paths:
+        for video_idx, vp in enumerate(self.video_paths):
             cap = cv2.VideoCapture(vp)
             num_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
             cap.release()
@@ -144,6 +156,28 @@ class VideoDataset(Dataset):
                     else (usable - self.sequence_length + 1)
                 )
 
+            # Stratified selection is applied after [start_frame, end_frame),
+            # so clip IDs are local to each rollout.
+            selected_clip_indices = None
+            if self.stratified_num_clips is not None:
+                count = self.stratified_num_clips
+                if count > num_sequences:
+                    raise ValueError(
+                        f"stratified_num_clips={count} exceeds the {num_sequences} "
+                        f"available clips for {vp}"
+                    )
+                rng = random.Random(self.stratified_seed * 1_000_003 + video_idx)
+                selected_clip_indices = tuple(
+                    rng.randint(
+                        stratum * num_sequences // count,
+                        (stratum + 1) * num_sequences // count - 1,
+                    )
+                    for stratum in range(count)
+                )
+                num_sequences = count
+
+            self._selected_clip_indices.append(selected_clip_indices)
+
             if self.num_accum_sequences:
                 self.num_accum_sequences.append(self.num_accum_sequences[-1] + num_sequences)
             else:
@@ -162,6 +196,10 @@ class VideoDataset(Dataset):
         video_path = self.video_paths[video_idx]
 
         local_idx = idx - (self.num_accum_sequences[video_idx - 1] if video_idx > 0 else 0)
+
+        selected_clip_indices = self._selected_clip_indices[video_idx]
+        if selected_clip_indices is not None:
+            local_idx = selected_clip_indices[local_idx]
 
         start = self._start_frame[video_idx]
         usable = self._usable_frames[video_idx]
