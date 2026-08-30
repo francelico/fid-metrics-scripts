@@ -28,6 +28,8 @@ class Run:
     label: str
     run_id: str
     root: Path
+    family: str | None = None
+    step: int | None = None
 
 
 RUNS = (
@@ -92,11 +94,71 @@ EVALUATIONS = (
 )
 
 
+def configure(campaign_root: Path | None, videos: int, long_only: bool) -> None:
+    global RUNS, LONG_IDS, EVALUATIONS
+    if videos <= 0:
+        raise ValueError("--videos must be positive")
+    if campaign_root is not None:
+        RUNS = discover_campaign_runs(campaign_root)
+    LONG_IDS = tuple(range(videos))
+    evaluations = [
+        Evaluation("exp1_long_full", "long_rollout", "0-1000", 0, 1000, videos),
+        Evaluation("exp2_long_quarters", "long_rollout", "0-249", 0, 249, videos),
+        Evaluation("exp2_long_quarters", "long_rollout", "250-499", 250, 499, videos),
+        Evaluation("exp2_long_quarters", "long_rollout", "500-749", 500, 749, videos),
+        Evaluation("exp2_long_quarters", "long_rollout", "750-999", 750, 999, videos),
+    ]
+    if not long_only:
+        evaluations.append(
+            Evaluation("exp3_free_full", "free_running", "0-76", 0, 76, 32)
+        )
+    EVALUATIONS = tuple(evaluations)
+
+
 def video_id(path: Path) -> int:
-    match = re.match(r"s(\d+)_", path.name)
+    match = re.match(r"s(\d+)(?:_|\.mp4$)", path.name)
     if not match:
         raise ValueError(f"Cannot parse sample ID from {path.name}")
     return int(match.group(1))
+
+
+def discover_campaign_runs(campaign_root: Path) -> tuple[Run, ...]:
+    """Discover <family>_s<step> runs from a completed long-rollout campaign."""
+    family_order = {"t50": 0, "p00": 1, "sampled_df": 2, "p01": 3}
+    family_label = {
+        "t50": "allctx-t50",
+        "p00": "allctx-p00",
+        "sampled_df": "sampled-df",
+        "p01": "allctx-p01",
+    }
+    runs = []
+    for run_dir in (campaign_root / "runs").iterdir():
+        if not run_dir.is_dir():
+            continue
+        match = re.fullmatch(r"(.+)_s(\d+)", run_dir.name)
+        if not match:
+            continue
+        family, step_text = match.groups()
+        step = int(step_text)
+        video_root = run_dir / "eval_outputs" / f"step_{step}"
+        if not (video_root / "long_rollout").is_dir():
+            raise RuntimeError(f"Missing long_rollout directory at {video_root}")
+        wandb_dirs = sorted((run_dir / "wandb").glob("run-*-*"))
+        run_id = wandb_dirs[-1].name.rsplit("-", 1)[-1] if wandb_dirs else run_dir.name
+        runs.append(Run(
+            run_dir.name,
+            f"{family_label.get(family, family)}-step{step}",
+            run_id,
+            video_root,
+            family,
+            step,
+        ))
+    if not runs:
+        raise RuntimeError(f"No campaign runs found below {campaign_root / 'runs'}")
+    return tuple(sorted(
+        runs,
+        key=lambda run: (family_order.get(run.family or "", 99), run.step or -1),
+    ))
 
 
 def sources(run: Run, kind: str, selected_ids: tuple[int, ...]) -> list[Path]:
@@ -111,7 +173,9 @@ def sources(run: Run, kind: str, selected_ids: tuple[int, ...]) -> list[Path]:
 def write_source_manifest(output: Path) -> None:
     rows = []
     for run in RUNS:
-        for kind, selected_ids in (("long_rollout", LONG_IDS), ("free_running", FREE_IDS)):
+        kinds = tuple(dict.fromkeys(item.video_kind for item in EVALUATIONS))
+        for kind in kinds:
+            selected_ids = LONG_IDS if kind == "long_rollout" else FREE_IDS
             all_paths = sorted((run.root / kind).glob("*.mp4"), key=video_id)
             selected = set(selected_ids)
             for path in all_paths:
@@ -130,6 +194,24 @@ def write_source_manifest(output: Path) -> None:
         writer.writeheader()
         writer.writerows(rows)
     (output / "source_manifest.json").write_text(json.dumps(rows, indent=2) + "\n")
+
+
+def stage_inputs(output: Path, run: Run, kind: str, selected_ids: tuple[int, ...]) -> Path:
+    stage = output / "selected_inputs" / kind / run.key
+    stage.mkdir(parents=True, exist_ok=True)
+    selected = sources(run, kind, selected_ids)
+    expected_names = {path.name for path in selected}
+    for old in stage.glob("*.mp4"):
+        if old.name not in expected_names:
+            old.unlink()
+    for source in selected:
+        target = stage / source.name
+        if target.is_symlink() and target.resolve() == source.resolve():
+            continue
+        if target.exists() or target.is_symlink():
+            target.unlink()
+        target.symlink_to(source)
+    return stage
 
 
 def link_long_splits(output: Path, long_split_root: Path) -> None:
@@ -152,21 +234,39 @@ def link_long_splits(output: Path, long_split_root: Path) -> None:
 
 
 def stage_free_inputs(output: Path, run: Run) -> Path:
-    stage = output / "selected_inputs" / "free_running" / run.key
-    stage.mkdir(parents=True, exist_ok=True)
-    selected = sources(run, "free_running", FREE_IDS)
-    expected_names = {path.name for path in selected}
-    for old in stage.glob("*.mp4"):
-        if old.name not in expected_names:
-            old.unlink()
-    for source in selected:
-        target = stage / source.name
-        if target.is_symlink() and target.resolve() == source.resolve():
-            continue
-        if target.exists() or target.is_symlink():
-            target.unlink()
-        target.symlink_to(source)
-    return stage
+    return stage_inputs(output, run, "free_running", FREE_IDS)
+
+
+def validate_split_ids(run: Run, kind: str, output: Path, selected_ids: tuple[int, ...]) -> None:
+    for side in ("gt", "generated"):
+        folder = output / "split" / kind / run.key / side
+        paths = sorted(folder.glob("*.mp4"), key=video_id)
+        ids = [video_id(path) for path in paths]
+        if ids != list(selected_ids):
+            raise RuntimeError(
+                f"{run.key}/{kind}/{side}: expected IDs "
+                f"{selected_ids[0]}-{selected_ids[-1]}; found {len(ids)} files"
+            )
+
+
+def prepare_long_run(output: Path, run: Run, overwrite: bool) -> None:
+    stage = stage_inputs(output, run, "long_rollout", LONG_IDS)
+    gt = output / "split" / "long_rollout" / run.key / "gt"
+    generated = output / "split" / "long_rollout" / run.key / "generated"
+    log = output / "logs" / f"prepare_long_rollout_{run.key}.log"
+    command = [
+        str(REPO / ".venv" / "bin" / "python"),
+        str(REPO / "scripts" / "split_reencode_trim.py"),
+        str(stage), str(gt), str(generated),
+        "--target-fps", "20", "--num-frames", "1001", "--vertical-split",
+    ]
+    if overwrite:
+        command.append("--overwrite")
+    with log.open("w") as handle:
+        subprocess.run(
+            command, cwd=REPO, stdout=handle, stderr=subprocess.STDOUT, check=True
+        )
+    validate_split_ids(run, "long_rollout", output, LONG_IDS)
 
 
 def prepare_free_run(output: Path, run: Run, overwrite: bool) -> None:
@@ -193,11 +293,30 @@ def prepare_free_run(output: Path, run: Run, overwrite: bool) -> None:
             raise RuntimeError(f"{run.key}/{side}: expected free-running IDs 0-31; found {ids}")
 
 
-def prepare(output: Path, long_split_root: Path, overwrite: bool) -> None:
+def prepare(
+    output: Path,
+    long_split_root: Path,
+    overwrite: bool,
+    campaign_root: Path | None,
+    long_only: bool,
+    prepare_workers: int,
+) -> None:
     (output / "logs").mkdir(parents=True, exist_ok=True)
     write_source_manifest(output)
-    link_long_splits(output, long_split_root)
-    with ThreadPoolExecutor(max_workers=len(RUNS)) as pool:
+    if campaign_root is None:
+        link_long_splits(output, long_split_root)
+    else:
+        with ThreadPoolExecutor(max_workers=min(prepare_workers, len(RUNS))) as pool:
+            futures = {
+                pool.submit(prepare_long_run, output, run, overwrite): run for run in RUNS
+            }
+            for future in as_completed(futures):
+                run = futures[future]
+                future.result()
+                print(f"prepared long_rollout {run.key}", flush=True)
+    if long_only:
+        return
+    with ThreadPoolExecutor(max_workers=min(prepare_workers, len(RUNS))) as pool:
         futures = {
             pool.submit(prepare_free_run, output, run, overwrite): run for run in RUNS
         }
@@ -393,23 +512,57 @@ def plot_quarters(output: Path) -> None:
     values = {(row["run_key"], row["window"]): float(row["fvd"]) for row in rows}
     windows = [evaluation.window for evaluation in EVALUATIONS
                if evaluation.experiment == "exp2_long_quarters"]
-    x = np.arange(len(windows))
-    width = 0.19
+    families = {}
+    for run in RUNS:
+        families.setdefault(run.family, []).append(run)
+    use_panels = len(RUNS) > 8 and None not in families
     colors = ("#0173B2", "#DE8F05", "#029E73", "#D55E00")
-    fig, ax = plt.subplots(figsize=(9.4, 5.3))
-    for index, run in enumerate(RUNS):
-        ys = [values[(run.key, window)] for window in windows]
-        offset = (index - (len(RUNS) - 1) / 2) * width
-        bars = ax.bar(x + offset, ys, width, label=run.label, color=colors[index])
-        ax.bar_label(bars, fmt="%.1f", padding=2, fontsize=7.5, rotation=90)
-    ax.set_xlabel("Original rollout frame window (inclusive)")
-    ax.set_ylabel("FVD ↓")
-    ax.set_title("Long-rollout FVD by frame subset\n20 videos, 25 × 10-frame clips per video")
-    ax.set_xticks(x, windows)
-    ax.grid(axis="y", alpha=0.25)
-    ax.set_axisbelow(True)
-    ax.legend(frameon=False, ncols=2)
-    ax.margins(y=0.15)
+    if use_panels:
+        fig, axes = plt.subplots(2, 2, figsize=(13.2, 8.2), sharey=True)
+        for ax, (family, family_runs) in zip(axes.flat, families.items()):
+            x = np.arange(len(family_runs))
+            width = 0.19
+            for index, window in enumerate(windows):
+                ys = [values[(run.key, window)] for run in family_runs]
+                offset = (index - (len(windows) - 1) / 2) * width
+                ax.bar(x + offset, ys, width, label=window, color=colors[index])
+            ax.set_title(family_runs[0].label.rsplit("-step", 1)[0])
+            ax.set_xticks(x, [f"step {run.step}" for run in family_runs])
+            ax.tick_params(axis="x", rotation=25)
+            ax.grid(axis="y", alpha=0.25)
+            ax.set_axisbelow(True)
+        axes[0, 0].set_ylabel("FVD ↓")
+        axes[1, 0].set_ylabel("FVD ↓")
+        handles, labels = axes[0, 0].get_legend_handles_labels()
+        fig.legend(handles, labels, title="Frame window", frameon=False,
+                   loc="upper center", ncols=4, bbox_to_anchor=(0.5, 0.95))
+        fig.suptitle(
+            f"Long-rollout FVD by frame subset\n"
+            f"{len(LONG_IDS)} videos, 25 × 10-frame clips per video",
+            y=1.01,
+        )
+    else:
+        x = np.arange(len(windows))
+        width = 0.8 / len(RUNS)
+        fig, ax = plt.subplots(figsize=(max(9.4, len(RUNS) * 1.1), 5.3))
+        cmap = plt.get_cmap("tab20")
+        for index, run in enumerate(RUNS):
+            ys = [values[(run.key, window)] for window in windows]
+            offset = (index - (len(RUNS) - 1) / 2) * width
+            bars = ax.bar(x + offset, ys, width, label=run.label, color=cmap(index))
+            if len(RUNS) <= 6:
+                ax.bar_label(bars, fmt="%.1f", padding=2, fontsize=7.5, rotation=90)
+        ax.set_xlabel("Original rollout frame window (inclusive)")
+        ax.set_ylabel("FVD ↓")
+        ax.set_title(
+            f"Long-rollout FVD by frame subset\n"
+            f"{len(LONG_IDS)} videos, 25 × 10-frame clips per video"
+        )
+        ax.set_xticks(x, windows)
+        ax.grid(axis="y", alpha=0.25)
+        ax.set_axisbelow(True)
+        ax.legend(frameon=False, ncols=2)
+        ax.margins(y=0.15)
     fig.tight_layout()
     for suffix in ("png", "pdf"):
         path = output / "exp2_long_quarters" / f"fvd_by_window.{suffix}"
@@ -433,11 +586,14 @@ def plot_single_window(
     by_run = {row["run_key"]: float(row["fvd"]) for row in rows}
     values = [by_run[run.key] for run in RUNS]
     labels = [run.label for run in RUNS]
-    colors = ("#0173B2", "#DE8F05", "#029E73", "#D55E00")
+    cmap = plt.get_cmap("tab20")
+    colors = [cmap(index) for index in range(len(RUNS))]
 
-    fig, ax = plt.subplots(figsize=(8.2, 5.2))
+    fig, ax = plt.subplots(figsize=(max(8.2, len(RUNS) * 0.85), 5.8))
     bars = ax.bar(labels, values, color=colors, width=0.68)
-    ax.bar_label(bars, fmt="%.1f", padding=4, fontsize=9)
+    ax.bar_label(bars, fmt="%.1f", padding=4, fontsize=8)
+    if len(RUNS) > 6:
+        ax.tick_params(axis="x", rotation=55)
     ax.set_ylabel("FVD ↓")
     ax.set_title(f"{title}\n{subtitle}")
     ax.grid(axis="y", alpha=0.25)
@@ -452,29 +608,33 @@ def plot_single_window(
 
 
 def plot_all(output: Path) -> None:
-    plot_single_window(
-        output,
-        "exp1_long_full",
-        "Full long-rollout FVD",
-        "20 videos, 100 × 10-frame clips per video",
-    )
-    plot_quarters(output)
-    plot_single_window(
-        output,
-        "exp3_free_full",
-        "Full free-running FVD",
-        "32 videos, 7 × 10-frame clips per video",
-    )
+    experiments = {item.experiment for item in EVALUATIONS}
+    if "exp1_long_full" in experiments:
+        plot_single_window(
+            output,
+            "exp1_long_full",
+            "Full long-rollout FVD",
+            f"{len(LONG_IDS)} videos, 100 × 10-frame clips per video",
+        )
+    if "exp2_long_quarters" in experiments:
+        plot_quarters(output)
+    if "exp3_free_full" in experiments:
+        plot_single_window(
+            output,
+            "exp3_free_full",
+            "Full free-running FVD",
+            "32 videos, 7 × 10-frame clips per video",
+        )
 
 
 def validate_plan(output: Path) -> None:
     import cv2
 
     for run in RUNS:
-        for kind, expected_ids, expected_frames in (
-            ("long_rollout", list(LONG_IDS), 1001),
-            ("free_running", list(FREE_IDS), 77),
-        ):
+        kinds = tuple(dict.fromkeys(item.video_kind for item in EVALUATIONS))
+        for kind in kinds:
+            expected_ids = list(LONG_IDS if kind == "long_rollout" else FREE_IDS)
+            expected_frames = 1001 if kind == "long_rollout" else 77
             evaluation = next(item for item in EVALUATIONS if item.video_kind == kind)
             gt, generated = inputs_for(output, run, evaluation)
             gt_paths = sorted(Path(gt.parent).glob(gt.name), key=video_id)
@@ -518,6 +678,16 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
     parser.add_argument("--long-split-root", type=Path, default=DEFAULT_LONG_SPLIT)
+    parser.add_argument(
+        "--campaign-root", type=Path,
+        help="discover <family>_s<step> runs and split their local long_rollout videos",
+    )
+    parser.add_argument("--videos", type=int, default=20)
+    parser.add_argument(
+        "--long-only", action="store_true",
+        help="run only full and quarter-window long-rollout experiments",
+    )
+    parser.add_argument("--prepare-workers", type=int, default=4)
     parser.add_argument("--phase", choices=("all", "prepare", "compute", "plot"), default="all")
     parser.add_argument("--gpus", help="comma-separated CUDA device IDs")
     parser.add_argument("--batch-size", type=int, default=8)
@@ -529,10 +699,21 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
+    campaign_root = args.campaign_root.resolve() if args.campaign_root else None
+    if campaign_root is not None and not args.long_only:
+        raise SystemExit("--campaign-root currently requires --long-only")
+    configure(campaign_root, args.videos, args.long_only)
     output = args.output.resolve()
     if args.phase in ("all", "prepare"):
         output.mkdir(parents=True, exist_ok=True)
-        prepare(output, args.long_split_root.resolve(), args.force_prepare)
+        prepare(
+            output,
+            args.long_split_root.resolve(),
+            args.force_prepare,
+            campaign_root,
+            args.long_only,
+            args.prepare_workers,
+        )
         validate_plan(output)
     if args.phase in ("all", "compute"):
         validate_plan(output)

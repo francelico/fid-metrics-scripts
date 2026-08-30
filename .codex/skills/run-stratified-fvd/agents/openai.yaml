@@ -1,0 +1,4 @@
+interface:
+  display_name: "Run Rollout FVD"
+  short_description: "Run rollout FVD and sampling-variance analyses"
+  default_prompt: "Use $run-stratified-fvd to evaluate rollout FVD across windows, clip lengths, or sampling configurations."
