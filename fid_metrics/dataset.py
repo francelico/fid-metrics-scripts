@@ -131,6 +131,10 @@ class VideoDataset(Dataset):
         self._start_frame = []
         self._usable_frames = []
         self._selected_clip_indices = []
+        # Process-local, one-video cache. DataLoader workers receive their own
+        # dataset copy, bounding memory while avoiding repeated mp4 open/seek.
+        self._cached_video_idx = None
+        self._cached_frames = None
 
         for video_idx, vp in enumerate(self.video_paths):
             cap = cv2.VideoCapture(vp)
@@ -221,18 +225,29 @@ class VideoDataset(Dataset):
                 f"selected window [{start}, {end_allowed}) for {video_path}"
             )
 
-        cap = cv2.VideoCapture(video_path)
-        cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
+        if self._cached_video_idx != video_idx:
+            cap = cv2.VideoCapture(video_path)
+            cap.set(cv2.CAP_PROP_POS_FRAMES, start)
+            cached = []
+            for relative_idx in range(usable):
+                ret, frame = cap.read()
+                if not ret:
+                    cap.release()
+                    absolute_idx = start + relative_idx
+                    raise RuntimeError(
+                        f"Failed to read frame at {absolute_idx} from {video_path}"
+                    )
+                cached.append(frame)
+            cap.release()
+            self._cached_video_idx = video_idx
+            self._cached_frames = cached
 
-        frames = []
-        for _ in range(self.sequence_length):
-            ret, frame = cap.read()
-            if not ret:
-                cap.release()
-                raise RuntimeError(f"Failed to read frame at {frame_idx} from {video_path}")
-            frames.append(frame)
-
-        cap.release()
+        frames = self._cached_frames[offset:offset + self.sequence_length]
+        if len(frames) != self.sequence_length:
+            raise RuntimeError(
+                f"Cached clip at frame {frame_idx} has {len(frames)} frames, "
+                f"expected {self.sequence_length}"
+            )
         frames = self.transforms(frames)
         return frames
 

@@ -175,7 +175,7 @@ launcher retains the original FVD preprocessing and 10-frame clip alignment.
 
 .venv/bin/python -u scripts/evaluate_rollout_fvd_10f_experiments.py \
   --campaign-root outputs/CAMPAIGN/campaign --output outputs/CAMPAIGN/analysis \
-  --videos 256 --long-only --gpus 6,7 --batch-size 32 --num-workers 4 \
+  --videos 256 --long-only --gpus 6,7 --batch-size 256 --num-workers 2 \
   --phase compute
 
 .venv/bin/python scripts/evaluate_rollout_fvd_10f_experiments.py \
@@ -192,6 +192,10 @@ For 16 runs, expect 80 FVD rows: 16 `lr-exp1` and 64 `lr-exp2`. Full FVD uses
 25,600 clips/distribution; each quarter uses 6,400. This workload is larger than
 the original 40-minute, four-run example above; measure progress before estimating
 runtime. Provide the existing `weights/i3d_pretrained_400.pt` weights.
+Use sequential FVD loading: each worker caches one decoded video window, and
+shuffling would defeat that cache. Batch 256 is validated on a B300 and keeps
+most of a video's 100 clips in one worker batch. Recheck memory before using it
+on smaller GPUs; reduce `--batch-size` there without changing metric semantics.
 
 `lr-exp3` uses the existing `fid_per_frame` config and InceptionV3 2048-dimensional
 features. It evaluates all 256 episodes independently at every frame 0–1000,

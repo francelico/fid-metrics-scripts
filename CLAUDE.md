@@ -32,6 +32,11 @@ python fid_metrics/main.py paths=[PATH_A,PATH_B]
 - **`fid_metrics/inception3d.py`** — `InceptionI3d` 3-D extractor for FVD (the `videogpt` model).
 - **`fid_metrics/resnet3d.py`** — ResNet-50 3-D, an alternative FVD backbone.
 
+FVD DataLoaders are sequential because `VideoDataset` caches the selected
+window of its current video inside each worker. Shuffling causes workers to
+repeatedly decode and seek through long mp4s and can leave the GPU idle. The
+sample set and FVD are order-invariant.
+
 ### FVD backbone choice
 
 `configs/config.yaml` selects the FVD model. Two options, **not interchangeable** in weights or call convention:

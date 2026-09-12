@@ -53,8 +53,11 @@ def build_loaders(type, paths, cfg):
             raise NotImplementedError
 
         dataset = C(path, **dataset_cfgs) if dataset_cfgs else C(path)
+        # Distance metrics are invariant to sample order. Sequential FVD access
+        # lets each worker reuse a decoded video window instead of seeking into
+        # the same mp4 once per short clip.
         dl = torch.utils.data.DataLoader(
-            dataset, bs, shuffle=type != 'fid_per_frame', num_workers=cfg.num_workers
+            dataset, bs, shuffle=type == 'fid', num_workers=cfg.num_workers
         )
         dls.append(dl)
     return dls
