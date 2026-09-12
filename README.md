@@ -8,9 +8,33 @@ This repository is derived from [fid-metrics](https://github.com/npurson/fid-met
 
 ## Installation
 
-    ```bash
-    pip install -r requirements.txt
-    ```
+Install [uv](https://docs.astral.sh/uv/getting-started/installation/), then run
+from the repository root:
+
+```bash
+uv sync
+source .venv/bin/activate
+```
+
+`uv sync` installs Python 3.11.13 and the dependencies recorded in `uv.lock`.
+The default environment matches the core Isambard evaluation stack: PyTorch
+2.13.0 and torchvision 0.28.0 with CUDA 13.0. Linux x86-64 (Verda) and aarch64
+(Isambard) are supported. Use an NVIDIA driver compatible with CUDA 13.0;
+the Python CUDA libraries are installed automatically. On Isambard, continue
+to source `~/.hpc_env` for the cluster's driver compatibility libraries.
+
+No separate `pip install` or PyTorch index flags are needed. `pyproject.toml`
+declares dependencies and the PyTorch index; commit `uv.lock` whenever these
+dependencies change. To verify the installation on a GPU node:
+
+```bash
+uv run python -c "import torch; print(torch.__version__, torch.version.cuda); print(torch.ones(1, device='cuda'))"
+uv run python -m fid_metrics.main --help
+```
+
+Some preparation scripts also invoke external tools (`ffmpeg`, `ffprobe`, or
+`azcopy`); install those separately when using those scripts. Model weights and
+datasets are also separate from the Python environment.
 
 ## Usage
 

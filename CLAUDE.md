@@ -13,7 +13,8 @@ The `fid_metrics/` package computes the metrics; the scripts at the repo root pr
 The package is **not installed** — set the path and run from the repo root:
 
 ```bash
-pip install -r requirements.txt
+uv sync
+source .venv/bin/activate
 export PYTHONPATH=`pwd`:$PYTHONPATH
 python fid_metrics/main.py paths=[PATH_A,PATH_B]
 ```
