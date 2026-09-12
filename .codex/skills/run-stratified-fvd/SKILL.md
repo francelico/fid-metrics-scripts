@@ -1,6 +1,6 @@
 ---
 name: run-stratified-fvd
-description: Reproduce rollout FVD analyses, including uniformly stratified sampling-variance studies and the four-run 10-frame full, quarter-window, and free-running experiment suite. Use when evaluating FVD across clip counts, clip lengths, rollout windows, or generation modes; repeating temporal samples across seeds; splitting side-by-side GT/generated videos; parallelizing FVD jobs across GPUs; or regenerating result tables and plots in the fid-metrics-scripts repository.
+description: Run rollout FVD and per-frame FID analyses in fid-metrics-scripts, including temporal sampling studies, full and quarter-window long rollouts, and free-running comparisons. Use for preparing paired videos, running metric campaigns, and regenerating their tables and plots.
 ---
 
 # Run Stratified FVD
@@ -72,10 +72,15 @@ Use the repository-level `scripts/evaluate_rollout_fvd_10f_experiments.py` for
 the fixed comparison of `allctx-t50`, `allctx-p00`, `sampled-df`, and
 `allctx-p01`. The launcher discovers the locally cached W&B videos and performs:
 
-1. Full long-rollout FVD on frames 1-1000: 20 videos and 100 10-frame clips/video.
-2. Long-rollout FVD on inclusive windows 0-249, 250-499, 500-749, and 750-999:
+1. `lr-exp1`: full long-rollout FVD on frames 1-1000: 20 videos and 100 10-frame clips/video.
+2. `lr-exp2`: long-rollout FVD on inclusive windows 0-249, 250-499, 500-749, and 750-999:
    20 videos and exactly 25 10-frame clips/video/window.
-3. Full free-running FVD on frames 7-76: 32 videos and 7 10-frame clips/video.
+3. `fr-exp1`: full free-running FVD on frames 7-76: 32 videos and 7 10-frame clips/video.
+
+`lr-exp3` is per-frame FID versus rollout time, run separately with
+`scripts/evaluate_rollout_fid_per_frame.py`. Experiment IDs are stable across
+campaigns; video counts are campaign parameters. The 20/32-video settings below
+describe the original August campaign, not a cap for subsequent analyses.
 
 Select long-rollout IDs `s000000` through `s000019`; exclude the highest four
 IDs from 24-video runs. Use all 32 free-running IDs. Treat the left side of each
@@ -118,20 +123,89 @@ all cells or `--force-prepare` to overwrite the free-running split videos.
 Inspect `fvd_all_results.csv`, `source_manifest.csv`, and all 24 `logs/fvd_*.log`
 files before reporting. The plot artifacts are:
 
-- `exp1_long_full/fvd_by_run.{png,pdf}`
-- `exp2_long_quarters/fvd_by_window.{png,pdf}`
-- `exp3_free_full/fvd_by_run.{png,pdf}`
+- `lr-exp1/fvd_by_run.{png,pdf}`
+- `lr-exp2/fvd_by_window.{png,pdf}`
+- `fr-exp1/fvd_by_run.{png,pdf}`
 
 Copy the complete experiment artifacts to the local machine with:
 
 ```bash
 mkdir -p ~/Downloads/rollout_fvd_10f_experiments_20260819
 scp -r \
-  u6ni.aip2.isambard:/projects/u6ni/francelico/fid-metrics-scripts/outputs/rollout_fvd_10f_experiments_20260819/exp1_long_full \
-  u6ni.aip2.isambard:/projects/u6ni/francelico/fid-metrics-scripts/outputs/rollout_fvd_10f_experiments_20260819/exp2_long_quarters \
-  u6ni.aip2.isambard:/projects/u6ni/francelico/fid-metrics-scripts/outputs/rollout_fvd_10f_experiments_20260819/exp3_free_full \
+  u6ni.aip2.isambard:/projects/u6ni/francelico/fid-metrics-scripts/outputs/rollout_fvd_10f_experiments_20260819/lr-exp1 \
+  u6ni.aip2.isambard:/projects/u6ni/francelico/fid-metrics-scripts/outputs/rollout_fvd_10f_experiments_20260819/lr-exp2 \
+  u6ni.aip2.isambard:/projects/u6ni/francelico/fid-metrics-scripts/outputs/rollout_fvd_10f_experiments_20260819/fr-exp1 \
   ~/Downloads/rollout_fvd_10f_experiments_20260819/
 ```
+
+## Run a downloaded 256-video campaign on Verda
+
+Use `~/fid-metrics-scripts/.venv/bin/python` on Verda. Check GPU processes and
+memory before selecting explicit `--gpus`; use tmux because there is no scheduler.
+Keep downloaded videos and outputs outside tracked source files.
+
+Enumerate W&B runs by **display name** containing `256` in
+`prefix-forcing/prefix-forcing`, verify their eval config, and save the run IDs,
+configs, filenames, sizes, and MD5 checksums. Download each run into its own folder:
+
+```bash
+.venv/bin/python scripts/download_data_wandb.py \
+  --run prefix-forcing/prefix-forcing/RUN_ID \
+  --prefix media/videos --video_filenames .mp4 \
+  --save-dir outputs/CAMPAIGN/downloads/RUN_ID
+```
+
+The general `--run-pattern` also matches IDs and flattens output; avoid it when
+selection must be by display name and several runs reuse the same sample IDs.
+Verify all downloads against W&B sizes/checksums. Retain duplicate uploads but
+select one per episode only when the duplicates have identical checksums; resolve
+conflicting duplicates before analysis. Stage IDs `s000000` through `s000255` as
+`campaign/runs/<family>_s<step>/eval_outputs/step_<step>/long_rollout/sXXXXXX.mp4`.
+Preserve a selection manifest and the original W&B run ID (the campaign discoverer
+reads it from `runs/<key>/wandb/run-<timestamp>-<run_id>`).
+
+For captions-disabled side-by-side videos, split left = GT, right = generated.
+Validate all 256 pairs per run as 1001 frames, 20 FPS, 224×128 per half. The
+launcher retains the original FVD preprocessing and 10-frame clip alignment.
+
+```bash
+.venv/bin/python -u scripts/evaluate_rollout_fvd_10f_experiments.py \
+  --campaign-root outputs/CAMPAIGN/campaign --output outputs/CAMPAIGN/analysis \
+  --videos 256 --long-only --prepare-workers 8 --phase prepare
+
+.venv/bin/python -u scripts/evaluate_rollout_fvd_10f_experiments.py \
+  --campaign-root outputs/CAMPAIGN/campaign --output outputs/CAMPAIGN/analysis \
+  --videos 256 --long-only --gpus 6,7 --batch-size 32 --num-workers 4 \
+  --phase compute
+
+.venv/bin/python scripts/evaluate_rollout_fvd_10f_experiments.py \
+  --campaign-root outputs/CAMPAIGN/campaign --output outputs/CAMPAIGN/analysis \
+  --videos 256 --long-only --phase plot
+
+.venv/bin/python -u scripts/evaluate_rollout_fid_per_frame.py \
+  --campaign-root outputs/CAMPAIGN/campaign --output outputs/CAMPAIGN/analysis \
+  --videos 256 --gpus 6,7 --batch-size 128 --num-workers 2
+```
+
+The example GPUs must be rechecked on each launch. `--long-only` omits `fr-exp1`.
+For 16 runs, expect 80 FVD rows: 16 `lr-exp1` and 64 `lr-exp2`. Full FVD uses
+25,600 clips/distribution; each quarter uses 6,400. This workload is larger than
+the original 40-minute, four-run example above; measure progress before estimating
+runtime. Provide the existing `weights/i3d_pretrained_400.pt` weights.
+
+`lr-exp3` uses the existing `fid_per_frame` config and InceptionV3 2048-dimensional
+features. It evaluates all 256 episodes independently at every frame 0–1000,
+including the conditioning frame at 0. Time is frame index / 20 (0–50 seconds).
+It writes 1001 CSV rows per run and unsmoothed PNG/PDF plots by model family, in
+both seconds and frame indices. No free-running video is needed. The plotter
+uses Matplotlib fonts when LaTeX is unavailable. Completed, finite, contiguous
+per-frame CSVs are reused; `--force` recomputes, and `--phase plot` regenerates plots.
+
+Keep `lr-exp1/`, `lr-exp2/`, `lr-exp3/`, manifests, configs, and logs together.
+Verify 16,016 per-frame rows for 16 runs, finite scores, successful exit codes,
+and every expected PNG/PDF. FID at 256 samples has sampling bias; compare runs
+with the same episode count and preprocessing. The new names apply to new
+outputs; historical directories are not automatically renamed.
 
 ## Verify outputs
 

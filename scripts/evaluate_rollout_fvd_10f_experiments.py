@@ -85,12 +85,12 @@ class Evaluation:
 
 
 EVALUATIONS = (
-    Evaluation("exp1_long_full", "long_rollout", "0-1000", 0, 1000, 20),
-    Evaluation("exp2_long_quarters", "long_rollout", "0-249", 0, 249, 20),
-    Evaluation("exp2_long_quarters", "long_rollout", "250-499", 250, 499, 20),
-    Evaluation("exp2_long_quarters", "long_rollout", "500-749", 500, 749, 20),
-    Evaluation("exp2_long_quarters", "long_rollout", "750-999", 750, 999, 20),
-    Evaluation("exp3_free_full", "free_running", "0-76", 0, 76, 32),
+    Evaluation("lr-exp1", "long_rollout", "0-1000", 0, 1000, 20),
+    Evaluation("lr-exp2", "long_rollout", "0-249", 0, 249, 20),
+    Evaluation("lr-exp2", "long_rollout", "250-499", 250, 499, 20),
+    Evaluation("lr-exp2", "long_rollout", "500-749", 500, 749, 20),
+    Evaluation("lr-exp2", "long_rollout", "750-999", 750, 999, 20),
+    Evaluation("fr-exp1", "free_running", "0-76", 0, 76, 32),
 )
 
 
@@ -102,15 +102,15 @@ def configure(campaign_root: Path | None, videos: int, long_only: bool) -> None:
         RUNS = discover_campaign_runs(campaign_root)
     LONG_IDS = tuple(range(videos))
     evaluations = [
-        Evaluation("exp1_long_full", "long_rollout", "0-1000", 0, 1000, videos),
-        Evaluation("exp2_long_quarters", "long_rollout", "0-249", 0, 249, videos),
-        Evaluation("exp2_long_quarters", "long_rollout", "250-499", 250, 499, videos),
-        Evaluation("exp2_long_quarters", "long_rollout", "500-749", 500, 749, videos),
-        Evaluation("exp2_long_quarters", "long_rollout", "750-999", 750, 999, videos),
+        Evaluation("lr-exp1", "long_rollout", "0-1000", 0, 1000, videos),
+        Evaluation("lr-exp2", "long_rollout", "0-249", 0, 249, videos),
+        Evaluation("lr-exp2", "long_rollout", "250-499", 250, 499, videos),
+        Evaluation("lr-exp2", "long_rollout", "500-749", 500, 749, videos),
+        Evaluation("lr-exp2", "long_rollout", "750-999", 750, 999, videos),
     ]
     if not long_only:
         evaluations.append(
-            Evaluation("exp3_free_full", "free_running", "0-76", 0, 76, 32)
+            Evaluation("fr-exp1", "free_running", "0-76", 0, 76, 32)
         )
     EVALUATIONS = tuple(evaluations)
 
@@ -507,11 +507,11 @@ def plot_quarters(output: Path) -> None:
     import matplotlib.pyplot as plt
     import numpy as np
 
-    with (output / "exp2_long_quarters" / "fvd_results.csv").open(newline="") as handle:
+    with (output / "lr-exp2" / "fvd_results.csv").open(newline="") as handle:
         rows = list(csv.DictReader(handle))
     values = {(row["run_key"], row["window"]): float(row["fvd"]) for row in rows}
     windows = [evaluation.window for evaluation in EVALUATIONS
-               if evaluation.experiment == "exp2_long_quarters"]
+               if evaluation.experiment == "lr-exp2"]
     families = {}
     for run in RUNS:
         families.setdefault(run.family, []).append(run)
@@ -565,7 +565,7 @@ def plot_quarters(output: Path) -> None:
         ax.margins(y=0.15)
     fig.tight_layout()
     for suffix in ("png", "pdf"):
-        path = output / "exp2_long_quarters" / f"fvd_by_window.{suffix}"
+        path = output / "lr-exp2" / f"fvd_by_window.{suffix}"
         fig.savefig(path, dpi=240 if suffix == "png" else None, bbox_inches="tight")
         print(f"wrote {path}", flush=True)
     plt.close(fig)
@@ -609,19 +609,19 @@ def plot_single_window(
 
 def plot_all(output: Path) -> None:
     experiments = {item.experiment for item in EVALUATIONS}
-    if "exp1_long_full" in experiments:
+    if "lr-exp1" in experiments:
         plot_single_window(
             output,
-            "exp1_long_full",
+            "lr-exp1",
             "Full long-rollout FVD",
             f"{len(LONG_IDS)} videos, 100 × 10-frame clips per video",
         )
-    if "exp2_long_quarters" in experiments:
+    if "lr-exp2" in experiments:
         plot_quarters(output)
-    if "exp3_free_full" in experiments:
+    if "fr-exp1" in experiments:
         plot_single_window(
             output,
-            "exp3_free_full",
+            "fr-exp1",
             "Full free-running FVD",
             "32 videos, 7 × 10-frame clips per video",
         )

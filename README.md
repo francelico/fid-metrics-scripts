@@ -71,6 +71,27 @@ script supports regex:
 or any path1, path2:
     `path1`, `path2` can either be images, videos, folders of images or pathnames of the aforementioned that match the pattern of `glob`.
 
+## Rollout experiment names
+
+| ID | Analysis |
+| --- | --- |
+| `fr-exp1` | Full free-running FVD, frames 7–76 |
+| `lr-exp1` | Full long-rollout FVD, frames 1–1000 |
+| `lr-exp2` | Long-rollout FVD in four 250-frame windows |
+| `lr-exp3` | Per-frame FID over long rollouts, frames 0–1000 / 0–50 seconds |
+
+Run the FVD experiments with `scripts/evaluate_rollout_fvd_10f_experiments.py`.
+For a 256-video campaign, pass `--campaign-root`, `--videos 256`, and
+`--long-only` to omit `fr-exp1`. Run `scripts/evaluate_rollout_fid_per_frame.py`
+against the same validated splits for `lr-exp3`; it uses the existing per-frame
+metric engine and `scripts/plot_fid_vs_t.py`. The latter accepts `--fps 20` to
+plot seconds and works without a LaTeX installation.
+
+See the [rollout analysis skill](.codex/skills/run-stratified-fvd/SKILL.md) for
+W&B downloading, duplicate handling, Verda commands, sample counts, and output
+verification. New output directories use the IDs above; historical output
+folders retain their original names until explicitly migrated.
+
 ## License
 
 Released under the [MIT](LICENSE) License.

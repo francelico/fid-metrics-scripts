@@ -15,6 +15,7 @@ have different lengths (e.g. one method ending earlier than the others).
 """
 import argparse
 import os
+import shutil
 import sys
 
 import numpy as np
@@ -40,8 +41,8 @@ def set_style():
         "font.family": "serif",
         "font.serif": ["STIXGeneral", "Times New Roman", "DejaVu Serif"],
         "mathtext.fontset": "stix",
-        # Render all text (labels, ticks, math) with the LaTeX engine.
-        "text.usetex": True,
+        # Use LaTeX when installed; keep headless analysis hosts supported.
+        "text.usetex": shutil.which("latex") is not None,
         "text.latex.preamble": r"\usepackage{amsmath}\usepackage{bm}",
         "axes.linewidth": 0.8,
         "axes.labelsize": 10,
@@ -112,9 +113,11 @@ def parse_args():
                    help="Base line width for the curves.")
     p.add_argument("--logy", action="store_true", help="Log-scale the y axis.")
     p.add_argument("--xlabel", default=r"Frame $t$")
+    p.add_argument("--fps", type=float,
+                   help="Convert frame indices to rollout time in seconds.")
     p.add_argument("--ylabel", default=r"FID$\downarrow$")
     p.add_argument("--title", default=None)
-    p.add_argument("--xmax", type=float, default=None, help="Clip x axis at this frame.")
+    p.add_argument("--xmax", type=float, default=None, help="Clip x axis at this frame, or seconds when --fps is set.")
     p.add_argument("--width", type=float, default=3.35, help="Figure width (inches).")
     p.add_argument("--height", type=float, default=2.5, help="Figure height (inches).")
     p.add_argument("--output", default="fid_vs_t",
@@ -126,6 +129,8 @@ def parse_args():
 
 def main():
     args = parse_args()
+    if args.fps is not None and args.fps <= 0:
+        sys.exit("--fps must be positive")
     labels = [s.strip() for s in args.labels.split(",")]
     csvs = [s.strip() for s in args.csvs.split(",")]
 
@@ -150,6 +155,8 @@ def main():
     for i, (label, csv) in enumerate(zip(labels, csvs)):
         df = pd.read_csv(csv)
         x = df["frame_index"].to_numpy() + shifts[i]
+        if args.fps is not None:
+            x = x / args.fps
         y = df["fid"].to_numpy()
         if args.xmax is not None:
             keep = x <= args.xmax
@@ -168,7 +175,7 @@ def main():
 
     if args.logy:
         ax.set_yscale("log")
-    ax.set_xlabel(args.xlabel)
+    ax.set_xlabel("Rollout time (s)" if args.fps is not None else args.xlabel)
     ax.set_ylabel(args.ylabel)
     if args.title:
         ax.set_title(args.title)
