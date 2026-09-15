@@ -570,7 +570,7 @@ def plot_quarters(output: Path) -> None:
         ax.set_axisbelow(True)
         ax.legend(frameon=False, ncols=2)
         ax.margins(y=0.15)
-    fig.tight_layout()
+    fig.tight_layout(rect=(0, 0, 1, 0.93) if use_panels else (0, 0, 1, 1))
     for suffix in ("png", "pdf"):
         path = output / "lr-exp2" / f"fvd_by_window.{suffix}"
         fig.savefig(path, dpi=240 if suffix == "png" else None, bbox_inches="tight")
