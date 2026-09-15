@@ -10,6 +10,8 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 import evaluate_rollout_fvd_10f_experiments as fvd
 from evaluate_rollout_fid_per_frame import valid_csv
+import evaluate_rollout_fid_per_frame as fid
+import csv
 from fid_metrics.dataset import VideoDataset
 
 
@@ -49,6 +51,42 @@ class TestRolloutExperiments(unittest.TestCase):
                 self.assertFalse(valid_csv(path, 2))
             path.write_text("frame_index,fid\n0,1\n1,2\n")
             self.assertTrue(valid_csv(path, 2))
+
+    def test_quarter_plot_includes_more_than_four_families(self):
+        import matplotlib.pyplot as plt
+        fvd.configure(None, 256, True)
+        runs = tuple(fvd.Run(f"family{family}_s{step}", f"family{family}-step{step}",
+                             "id", Path("."), f"family{family}", step)
+                     for family in range(7) for step in (1, 2))
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(fvd, "RUNS", runs):
+            out = Path(tmp)
+            (out / "lr-exp2").mkdir()
+            with (out / "lr-exp2/fvd_results.csv").open("w") as handle:
+                writer = csv.DictWriter(handle, fieldnames=["run_key", "window", "fvd"])
+                writer.writeheader()
+                for run in runs:
+                    for evaluation in fvd.EVALUATIONS[1:]:
+                        writer.writerow(dict(run_key=run.key, window=evaluation.window, fvd=10))
+            with mock.patch.object(plt, "close"):
+                fvd.plot_quarters(out)
+                fig = plt.gcf()
+                titles = {ax.get_title() for ax in fig.axes if ax.get_visible()}
+            plt.close(fig)
+            self.assertEqual(titles, {f"family{i}" for i in range(7)})
+            self.assertTrue((out / "lr-exp2/fvd_by_window.png").stat().st_size)
+            self.assertTrue((out / "lr-exp2/fvd_by_window.pdf").stat().st_size)
+
+    def test_fid_plot_fails_if_plotter_produces_no_artifacts(self):
+        run = fvd.Run("df_s1", "df-step1", "id", Path("."), "df", 1)
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(fvd, "RUNS", (run,)):
+            out = Path(tmp)
+            folder = out / "lr-exp3/df_s1"
+            folder.mkdir(parents=True)
+            (folder / "fid_per_frame.csv").write_text(
+                "frame_index,fid\n" + "".join(f"{i},1\n" for i in range(1001)))
+            with mock.patch.object(fid.subprocess, "run"):
+                with self.assertRaisesRegex(RuntimeError, "Missing FID plot artifact"):
+                    fid.plot(out)
 
     def test_video_dataset_decodes_window_once_for_sequential_clips(self):
         class FakeCapture:

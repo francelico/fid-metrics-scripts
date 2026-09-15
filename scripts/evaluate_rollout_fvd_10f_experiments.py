@@ -124,12 +124,15 @@ def video_id(path: Path) -> int:
 
 def discover_campaign_runs(campaign_root: Path) -> tuple[Run, ...]:
     """Discover <family>_s<step> runs from a completed long-rollout campaign."""
-    family_order = {"t50": 0, "p00": 1, "sampled_df": 2, "p01": 3}
+    family_order = {"t50": 0, "p00": 1, "sampled_df": 2, "p01": 3, "t00": 4, "df": 5, "sampled_df_notail": 6}
     family_label = {
         "t50": "allctx-t50",
         "p00": "allctx-p00",
         "sampled_df": "sampled-df",
         "p01": "allctx-p01",
+        "t00": "allctx-t00",
+        "df": "df",
+        "sampled_df_notail": "sampled-df-notail",
     }
     runs = []
     for run_dir in (campaign_root / "runs").iterdir():
@@ -518,7 +521,9 @@ def plot_quarters(output: Path) -> None:
     use_panels = len(RUNS) > 8 and None not in families
     colors = ("#0173B2", "#DE8F05", "#029E73", "#D55E00")
     if use_panels:
-        fig, axes = plt.subplots(2, 2, figsize=(13.2, 8.2), sharey=True)
+        nrows = (len(families) + 1) // 2
+        fig, axes = plt.subplots(nrows, 2, figsize=(13.2, 4.1 * nrows),
+                                 sharey=True, squeeze=False)
         for ax, (family, family_runs) in zip(axes.flat, families.items()):
             x = np.arange(len(family_runs))
             width = 0.19
@@ -531,8 +536,10 @@ def plot_quarters(output: Path) -> None:
             ax.tick_params(axis="x", rotation=25)
             ax.grid(axis="y", alpha=0.25)
             ax.set_axisbelow(True)
-        axes[0, 0].set_ylabel("FVD ↓")
-        axes[1, 0].set_ylabel("FVD ↓")
+        for ax in axes[:, 0]:
+            ax.set_ylabel("FVD ↓")
+        for ax in list(axes.flat)[len(families):]:
+            ax.set_visible(False)
         handles, labels = axes[0, 0].get_legend_handles_labels()
         fig.legend(handles, labels, title="Frame window", frameon=False,
                    loc="upper center", ncols=4, bbox_to_anchor=(0.5, 0.95))

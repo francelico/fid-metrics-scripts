@@ -80,3 +80,9 @@ The FVD launcher accepts `--campaign-root`, `--videos`, and `--long-only`.
 and produces per-run CSVs plus family plots using `scripts/plot_fid_vs_t.py`.
 Use `--fps 20` in the plotter for seconds. Do not substitute rollout-averaged
 FID for per-frame FID. Preserve manifests and all 256 distinct episode IDs.
+
+FID CSVs alone are not a completed plotting task. Always execute the explicit
+`--phase plot` step in the analysis skill, verify every family in
+`lr-exp3/plot_manifest.json`, and deliver both PNG and PDF plots to the requested
+local destination. Expanded campaigns must include every model family in the
+quarter-window FVD panels.

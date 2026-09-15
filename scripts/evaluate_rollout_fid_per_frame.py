@@ -69,6 +69,7 @@ def plot(output: Path) -> None:
     for run in fvd.RUNS:
         groups.setdefault(run.family or "all", []).append(run)
     combined = []
+    artifacts = []
     for family, runs in groups.items():
         csvs = [output / "lr-exp3" / run.key / "fid_per_frame.csv" for run in runs]
         if not all(valid_csv(path, 1001) for path in csvs):
@@ -93,7 +94,16 @@ def plot(output: Path) -> None:
             if seconds:
                 command += ["--fps", "20"]
             subprocess.run(command, cwd=fvd.REPO, check=True)
+            stem = output / "lr-exp3" / f"fid_vs_{'time' if seconds else 'frame'}_{family}"
+            for suffix in ("png", "pdf"):
+                path = stem.with_suffix("." + suffix)
+                if not path.is_file() or path.stat().st_size == 0:
+                    raise RuntimeError(f"Missing FID plot artifact: {path}")
+                artifacts.append(str(path))
     fvd.write_rows(output / "lr-exp3/fid_all_results", combined)
+    (output / "lr-exp3/plot_manifest.json").write_text(
+        json.dumps({"families": sorted(groups), "artifacts": artifacts}, indent=2) + "\n"
+    )
 
 
 def main() -> None:
@@ -101,12 +111,14 @@ def main() -> None:
     parser.add_argument("--campaign-root", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--videos", type=int, default=256)
-    parser.add_argument("--gpus", required=True)
+    parser.add_argument("--gpus", help="required for compute/all; unused for plot")
     parser.add_argument("--batch-size", type=int, default=128)
     parser.add_argument("--num-workers", type=int, default=2)
     parser.add_argument("--phase", choices=("all", "compute", "plot"), default="all")
     parser.add_argument("--force", action="store_true")
     args = parser.parse_args()
+    if args.phase != "plot" and not args.gpus:
+        parser.error("--gpus is required for compute/all")
     output = args.output.resolve()
     fvd.configure(args.campaign_root.resolve(), args.videos, True)
     fvd.validate_plan(output)

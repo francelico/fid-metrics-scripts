@@ -229,3 +229,39 @@ scan logs for tracebacks or CUDA errors before reporting results. Report FVD as
 mean plus-or-minus sample SD and state the repeats, episodes, and dropped-frame
 rule. Preserve the CSV, selection manifest, plot, and logs together when copying
 artifacts off the cluster.
+
+## Required plot deliverables for expanded campaigns
+
+A CSV alone does not complete `lr-exp3`. After computing (or reusing) the
+per-frame CSVs, explicitly run both plot phases:
+
+```bash
+.venv/bin/python scripts/evaluate_rollout_fvd_10f_experiments.py \
+  --campaign-root outputs/CAMPAIGN/campaign --output outputs/CAMPAIGN/analysis \
+  --videos 256 --long-only --phase plot
+.venv/bin/python scripts/evaluate_rollout_fid_per_frame.py \
+  --campaign-root outputs/CAMPAIGN/campaign --output outputs/CAMPAIGN/analysis \
+  --videos 256 --phase plot
+```
+
+Plot-only FID needs no GPU argument. Verify `lr-exp3/plot_manifest.json` and
+all listed nonempty PNG/PDF files: `fid_vs_frame_<family>.{png,pdf}` and
+`fid_vs_time_<family>.{png,pdf}` for **every** discovered model family.
+The launcher raises an error if the plotter fails to create an artifact.
+Visually inspect plots for complete legends/panels and readable labels.
+The quarter-window FVD panel layout must include every family, not just four.
+
+Select completed runs with 256 distinct uploaded episodes. Keep failed or
+interrupted attempts in the inventory but exclude their incomplete videos.
+Do not silently merge repeated successful runs of one model/checkpoint:
+retain distinct run identities or explicitly document any exact duplicates.
+For N runs, require 5*N FVD rows and 1001*N per-frame FID rows. For F model
+families, require 4 FVD plot files plus 4*F FID plot files. The earlier 16-run
+counts are examples, not fixed campaign sizes. Cached metrics may be reused
+only for the same W&B run IDs, inputs, preprocessing and metric settings.
+
+On the current Verda setup, run as `francelico@86.38.238.210`, use
+`/home/francelico/fid-metrics-scripts/.venv`, and recheck free GPUs. Historical
+artifacts remain on CPU node `root@86.38.182.153`. Copy the completed PNG/PDF
+plots, CSVs and provenance manifests to the user's local `~/Downloads/` and
+verify the local file counts before reporting completion.
