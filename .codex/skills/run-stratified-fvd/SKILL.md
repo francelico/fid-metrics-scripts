@@ -265,3 +265,22 @@ On the current Verda setup, run as `francelico@86.38.238.210`, use
 artifacts remain on CPU node `root@86.38.182.153`. Copy the completed PNG/PDF
 plots, CSVs and provenance manifests to the user's local `~/Downloads/` and
 verify the local file counts before reporting completion.
+
+## FVD versus training compute (PFLOPs)
+
+For the existing ctx1 Minecraft checkpoints, use the compute accounting and
+method colors from the August 2026 `pflop_threshold_fvd_10f` campaign:
+all-context variants cost 3.68965809340416 PFLOPs per optimizer step;
+`df`, `sampled-df`, and `sampled-df-notail` cost 1.94158962671616.
+The x coordinate is checkpoint step times that factor, not eval runtime or
+threshold-group names. Revalidate factors for different training configurations.
+
+```bash
+.venv/bin/python scripts/plot_rollout_fvd_vs_pflops.py \
+  --analysis outputs/CAMPAIGN/analysis
+```
+
+Require five PNG/PDF pairs under `analysis/fvd_vs_pflops/`: full long rollout
+and windows 0-249, 250-499, 500-749, 750-999. Preserve the emitted data CSV and
+plot config with the compute factors. Do not include free-running plots when
+that evaluation was skipped. Include these ten files in the local download.
