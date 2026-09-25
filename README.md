@@ -1,6 +1,6 @@
 # FID/FVD Metrics
 
-This repository provides a toolkit for computing Fréchet Inception Distance (FID) and Fréchet Video Distance (FVD) metrics, widely utilized for assessing the quality of generative models in the fields of image and video generation.
+This repository provides a toolkit for computing Fréchet Inception Distance (FID), Fréchet Video Distance (FVD), and directional Gaussian KL divergences in video feature space.
 
 ## Acknowledgements
 
@@ -70,6 +70,30 @@ script supports regex:
 
 or any path1, path2:
     `path1`, `path2` can either be images, videos, folders of images or pathnames of the aforementioned that match the pattern of `glob`.
+
+### Forward and reverse KL
+
+The video metrics use the same I3D features and Gaussian mean/covariance estimates as FVD. With `paths=[reference,generated]`, forward KL is
+`KL(reference || generated)` and reverse KL is `KL(generated || reference)`.
+Both are dimensionless and lower is better; unlike FVD, they are directional.
+For finite samples, both covariance matrices receive the same diagonal ridge
+(`kl_eps`, default `1e-6`), increased only if needed for Cholesky factorization.
+This matters especially when there are fewer clips than feature dimensions.
+
+To compute all three scores from one feature extraction, add this to the FVD
+metric entry in `configs/config.yaml`:
+
+```yaml
+    scores: [fvd, forward_kl, reverse_kl]
+    kl_eps: 1.0e-6
+```
+
+For a single run, pass `+metrics.0.scores=[fvd,forward_kl,reverse_kl]`
+alongside the `paths` override in the example above.
+
+Or set `type: forward_kl` or `type: reverse_kl` in place of `type: fvd` to
+compute one KL direction. The FVD configuration and I3D model options apply to
+all three scores.
 
 ## Rollout experiment names
 

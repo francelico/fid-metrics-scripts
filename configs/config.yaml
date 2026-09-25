@@ -1,5 +1,8 @@
 metrics:
   - type: fvd
+    # To compute both directional Gaussian KLs from the same I3D features:
+    # scores: [fvd, forward_kl, reverse_kl]
+    # kl_eps: 1.0e-6
     model:
       type: videogpt
       path: weights/i3d_pretrained_400.pt

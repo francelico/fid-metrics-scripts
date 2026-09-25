@@ -205,6 +205,63 @@ def calculate_fid(act1, act2, device=None, dtype=torch.float32):
     return calculate_frechet_distance(m1, s1, m2, s2).item()
 
 
+def calculate_gaussian_kls(mu1, sigma1, mu2, sigma2, eps=1e-6):
+    """Return ``(KL(P1 || P2), KL(P2 || P1))`` for Gaussian features.
+
+    The inputs have shapes ``[..., D]`` and ``[..., D, D]``. A shared diagonal
+    ridge is added to both sample covariances because they are singular when
+    the number of clips is at most the feature dimension. If necessary, the
+    ridge is increased until both Cholesky factorizations succeed. The returned
+    KLs therefore describe the same regularized Gaussian pair in both
+    directions. Use float64 moments for reliable results at high dimensions.
+    """
+    if eps <= 0:
+        raise ValueError('eps must be positive')
+    if mu1.shape != mu2.shape or sigma1.shape != sigma2.shape:
+        raise ValueError('Gaussian means and covariances must have matching shapes')
+    if sigma1.shape[-2:] != (mu1.shape[-1], mu1.shape[-1]):
+        raise ValueError('Covariance dimensions must match the feature dimension')
+
+    d = mu1.shape[-1]
+    eye = torch.eye(d, device=sigma1.device, dtype=sigma1.dtype)
+    s1 = 0.5 * (sigma1 + sigma1.transpose(-1, -2))
+    s2 = 0.5 * (sigma2 + sigma2.transpose(-1, -2))
+    ridge = eps
+    for _ in range(12):
+        l1, info1 = torch.linalg.cholesky_ex(s1 + ridge * eye)
+        l2, info2 = torch.linalg.cholesky_ex(s2 + ridge * eye)
+        if not (torch.any(info1 != 0) or torch.any(info2 != 0)):
+            break
+        ridge *= 10
+    else:
+        raise ValueError('Covariances are not positive definite after regularization')
+
+    diff = (mu2 - mu1).unsqueeze(-1)
+    # ||L2^-1 L1||_F^2 = tr(S2^-1 S1), including the shared ridge.
+    forward_cov = torch.linalg.solve_triangular(l2, l1, upper=False).square().sum((-2, -1))
+    reverse_cov = torch.linalg.solve_triangular(l1, l2, upper=False).square().sum((-2, -1))
+    forward_mean = torch.linalg.solve_triangular(l2, diff, upper=False).square().sum((-2, -1))
+    reverse_mean = torch.linalg.solve_triangular(l1, diff, upper=False).square().sum((-2, -1))
+    logdet1 = 2 * torch.log(torch.diagonal(l1, dim1=-2, dim2=-1)).sum(-1)
+    logdet2 = 2 * torch.log(torch.diagonal(l2, dim1=-2, dim2=-1)).sum(-1)
+    forward = 0.5 * (forward_cov + forward_mean - d + logdet2 - logdet1)
+    reverse = 0.5 * (reverse_cov + reverse_mean - d + logdet1 - logdet2)
+    return forward, reverse
+
+
+def calculate_forward_reverse_kl(act1, act2, device=None, eps=1e-6):
+    """Gaussian KLs for two activation sets, in input order.
+
+    Returns Python floats ``(KL(act1 || act2), KL(act2 || act1))``. Statistics
+    are calculated in float64 to reduce covariance roundoff before Cholesky.
+    """
+    device = _resolve_device(device)
+    m1, s1 = calculate_act_statistics(act1, device=device, dtype=torch.float64)
+    m2, s2 = calculate_act_statistics(act2, device=device, dtype=torch.float64)
+    forward, reverse = calculate_gaussian_kls(m1, s1, m2, s2, eps=eps)
+    return forward.item(), reverse.item()
+
+
 def calculate_fid_per_frame(act1, act2, start_frame=0, output_csv='fid_per_frame.csv',
                             device=None, dtype=torch.float32, frame_batch_size=32):
     """FID computed independently at each frame index (batched on the GPU).

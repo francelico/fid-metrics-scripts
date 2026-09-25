@@ -14,6 +14,7 @@ from fid_metrics import (
     build_inception3d,
     calculate_fid,
     calculate_fid_per_frame,
+    calculate_forward_reverse_kl,
     is_image_dir_path,
     is_video_path,
     postprocess_i2d_pred,
@@ -66,7 +67,7 @@ def build_loaders(type, paths, cfg):
 def build_model(type, cfg):
     if type in ('fid', 'fid_per_frame'):
         return build_inception(cfg.dims)
-    elif type == 'fvd':
+    elif type in ('fvd', 'forward_kl', 'reverse_kl'):
         return build_inception3d(cfg.type, cfg.path)
     else:
         raise NotImplementedError
@@ -96,7 +97,7 @@ def main(cfg: DictConfig):
                 x = next(dl).to(device)
                 if type in ('fid', 'fid_per_frame') and x.dim() == 5:
                     x = x.squeeze(0).transpose(0, 1)
-                elif type == 'fvd':
+                elif type in ('fvd', 'forward_kl', 'reverse_kl'):
                     x = x * 2 - 1  # [-1, 1]
                 with torch.no_grad():
                     if type == 'fid':
@@ -109,7 +110,7 @@ def main(cfg: DictConfig):
                                  for s in range(0, x.shape[0], chunk)]
                         preds = [p if p.dim() > 1 else p.unsqueeze(0) for p in preds]
                         pred = torch.cat(preds, dim=0)
-                    elif type == 'fvd':
+                    elif type in ('fvd', 'forward_kl', 'reverse_kl'):
                         if metric_cfgs.model.type == 'styleganv':
                             pred = model(x, return_features=True)
                         else:
@@ -127,9 +128,23 @@ def main(cfg: DictConfig):
                 start_frame=int(metric_cfgs.data.dataset.get('start_frame', 0)),
                 output_csv=os.path.abspath(metric_cfgs.get('output_csv', 'fid_per_frame.csv')),
             )
+        elif type == 'fid':
+            print(f'FID: {calculate_fid(*feats)}')
         else:
-            fid = calculate_fid(*feats)
-            print(f'{type.upper()}: {fid}')
+            scores = list(metric_cfgs.get('scores', [type]))
+            valid_scores = {'fvd', 'forward_kl', 'reverse_kl'}
+            if not scores or set(scores) - valid_scores:
+                raise ValueError(f'Video scores must be chosen from {sorted(valid_scores)}')
+            if 'fvd' in scores:
+                print(f'FVD: {calculate_fid(*feats)}')
+            if 'forward_kl' in scores or 'reverse_kl' in scores:
+                forward, reverse = calculate_forward_reverse_kl(
+                    *feats, eps=float(metric_cfgs.get('kl_eps', 1e-6))
+                )
+                if 'forward_kl' in scores:
+                    print(f'FORWARD_KL: {forward}')
+                if 'reverse_kl' in scores:
+                    print(f'REVERSE_KL: {reverse}')
 
 
 if __name__ == '__main__':
